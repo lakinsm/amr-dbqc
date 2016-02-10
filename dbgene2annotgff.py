@@ -141,7 +141,9 @@ load_annots(args.database_annotations)
 svals = {k: [x for x in zip(*v.values())][0] for k, v in refseq_annot.items()}
 evals = {k: [x for x in zip(*v.values())][0] for k, v in refseq_annot.items()}
 
-sys.stdout.write('db_gene\tmismatch\tquery_gap\ttarget_gap\tstrand\tquery_start\tquery_end\tblock_size\tclass\tmechanism\tgroup\tfeature_start\tfeature_stop\tfeature_size\tfeature_string\tseqs\n')
+sys.stdout.write('db_gene\tmismatch\tquery_gap\ttarget_gap\tstrand\tquery_start\tquery_end\t'
+                 'block_size\tclass\tmechanism\tgroup\tfeature_start\tfeature_stop\tfeature_size\t'
+                 'feature_string\tseqs\n')
 for entry in pslx_parse(args.pslx_file):
     ## Start value
     annots = db_annot[entry[5]]
