@@ -44,6 +44,8 @@ def pslx_parse(infile):
             if line.startswith("#"):
                 continue
             line = line.strip().split()
+            if int(line[5]) > 100 or int(line[7]) > 100:
+                continue
             # name, mismatch, qgap, tgap, strand, qname, qsize, qstart, qstop, tname, tstart, tstop, bsize
             data = (line[0],  # 0 name
                     line[1],  # 1 mismatch
@@ -93,7 +95,11 @@ def load_gff(gff_file):
                 continue
             temp = line.split('\t')
             if temp[1] == "ena" and temp[2] == "gene":
-                refseq_annot.setdefault(temp[8], (temp[3], temp[4]))
+                try:
+                    refseq_annot[temp[0]].setdefault(temp[8], (temp[3], temp[4]))
+                except KeyError:
+                    refseq_annot.setdefault(temp[0], collections.OrderedDict({temp[0]: (temp[3], temp[4])}))
+
 
 
 def binary_search(val_list, term):
@@ -114,7 +120,7 @@ def binary_search(val_list, term):
             if term < int(val_list[midpoint]):
                 return binary_search(val_list[:midpoint], term)
             else:
-                return binary_search(val_list[midpoint + 1:], term)
+                return binary_search(val_list[midpoint:], term)
 
 
 ##############
@@ -132,43 +138,51 @@ parser.add_argument('gff_annotations', type=str, help='File path to the GFF anno
 args = parser.parse_args()
 load_gff(args.gff_annotations)
 load_annots(args.database_annotations)
-svals = [x for x in zip(*refseq_annot.values())][0]
-evals = [x for x in zip(*refseq_annot.values())][1]
+svals = {k: [x for x in zip(*v.values())][0] for k, v in refseq_annot.items()}
+evals = {k: [x for x in zip(*v.values())][0] for k, v in refseq_annot.items()}
 
-sys.stdout.write('db_gene\tmismatch\tquery_gap\ttarget_gap\tstrand\tclass\tmechanism\tgroup\tfeature_start\tfeature_stop\tfeature_size\tfeature_string\tseqs\n')
+sys.stdout.write('db_gene\tmismatch\tquery_gap\ttarget_gap\tstrand\tquery_start\tquery_end\tblock_size\tclass\tmechanism\tgroup\tfeature_start\tfeature_stop\tfeature_size\tfeature_string\tseqs\n')
 for entry in pslx_parse(args.pslx_file):
     ## Start value
     annots = db_annot[entry[5]]
     hits = [x for x in zip(*[y.split(',') for y in entry[12:16]])]  # tuples of (size, qstart, tstart, seq) + empty
+    name = entry[9]
+    try:
+        temp = evals[name]
+    except KeyError:
+        if len(evals.keys()) == 1:
+            name = list(evals.keys())[0]
+        else:
+            raise KeyError('GFF3 file annotations do not match BLAT target name')
     for tup in hits:
         if all(x for x in tup):
-            smatch = binary_search(svals, int(tup[2]))
-            if smatch > int(tup[2]):
-                sindex = svals.index(str(smatch)) - 1
+            smatch = binary_search(evals[name], int(entry[10]))
+            if smatch < int(entry[10]):
+                sindex = evals[name].index(str(smatch)) + 1
             else:
-                sindex = svals.index(str(smatch))
+                sindex = evals[name].index(str(smatch))
             ## End value
-            tup_eval = int(tup[2]) + int(tup[0])
-            ematch = binary_search(evals, tup_eval)
-            if ematch < tup_eval:
-                eindex = evals.index(str(ematch)) + 1
+            tup_eval = int(entry[11])
+            ematch = binary_search(svals[name], tup_eval)
+            if ematch > tup_eval:
+                eindex = svals[name].index(str(ematch)) - 1
             else:
-                eindex = evals.index(str(ematch))
+                eindex = svals[name].index(str(ematch))
             keyvalues = []
             for j in range(sindex, eindex + 1):
-                keyvalues.append(next(v for i, v in enumerate(refseq_annot.items()) if i == j))
+                keyvalues.append(next(v for i, v in enumerate(refseq_annot[name].items()) if i == j))
             for k, v in keyvalues:
-                if int(v[0]) - int(tup[2]) <= 0:
-                    covstart = int(tup[1])
+                if int(v[0]) - int(entry[10]) <= 0:
+                    covstart = int(entry[7])
                 else:
-                    covstart = int(v[0]) - int(tup[2])
+                    covstart = int(v[0]) - int(entry[10])
                 if int(v[1]) - tup_eval > 0:
-                    covend = int(tup[1]) + int(tup[0])
+                    covend = int(entry[8])
                 else:
-                    covend = (int(tup[1]) + int(tup[0])) - (int(v[1]) - tup_eval)
-                sys.stdout.write(str(entry[5])+'\t'+'\t'.join([str(x) for x in entry[2:5]])+'\t'+'\t'.join(annots)+'\t'
-                                 +str(covstart)+'\t'+str(covend)
-                                 +'\t'+str(tup[0])+'\t'+str(k)+'\t'+str(tup[3])+'\n')
+                    covend = int(entry[8]) + (int(v[1]) - tup_eval)
+                sys.stdout.write(str(entry[5])+'\t'+'\t'.join([str(x) for x in entry[1:5]])+'\t'+entry[7]+'\t'+
+                                 entry[8]+'\t'+tup[0]+'\t'+'\t'.join(annots)+'\t'+str(covstart)+'\t'+str(covend)
+                                 +'\t'+str(covend-covstart)+'\t'+str(k)+'\t'+str(tup[3])+'\n')
 
 
 
