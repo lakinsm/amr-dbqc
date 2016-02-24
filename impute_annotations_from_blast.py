@@ -9,6 +9,7 @@
 #############
 import argparse
 import sys
+import re
 from collections import Counter
 
 
@@ -16,7 +17,9 @@ from collections import Counter
 ## Vars ##
 ##########
 db_annot = {}
-blast_hash = {}
+diamond_hash = {}
+diamond_reject = set()
+annotated_seqs = set()
 
 
 #############
@@ -29,13 +32,18 @@ def blast_parse(infile):
     :return: generator of relevant information
     """
     with open(infile, 'r') as blast:
+        progress = 0
         while True:
+            progress += 1
+            if progress % 200000 == 0:
+                sys.stderr.write('\r{:d} hits processed'.format(progress))
             line = blast.readline()
             if not line:
+                sys.stderr.write('\r{:d} hits processed\n'.format(progress))
                 return  # Stop Iteration
             if line.startswith("#"):
                 continue
-            line = line.strip().split()
+            line = line.rstrip().split('\\t')
             yield line
         assert False, "Should not reach this line"
 
@@ -53,6 +61,39 @@ def load_annots(annot_file):
             temp = line.split(',')
             db_annot.setdefault(temp[0], temp[1:4])
 
+
+def load_diamond(diamond_file):
+    """
+    Parses diamond hit file (tabular blast output format) and stores the query
+    :param diamond_file:
+    :return:
+    """
+    with open(diamond_file, 'r') as dmnd:
+        data = dmnd.read().split('\n')
+        for line in data:
+            temp = line.split('\t')
+            if line:
+                query = temp[1].split('|')
+                if float(temp[2]) >= 70:
+                    diamond_hash.setdefault((query[1], query[3]), [temp[0], Counter()])
+                else:
+                    diamond_reject.add((query[1], query[3]))
+
+
+def pop_unknown(counter_obj):
+    unknown = re.compile(r'unknown')
+    try:
+        annot = max(counter_obj)
+        if unknown.search(max(counter_obj)):
+            counter_obj.pop(annot)
+            pop_unknown(counter_obj)
+        else:
+            return annot
+    except ValueError:
+        return None
+
+
+
 ##############
 ## ArgParse ##
 ##############
@@ -60,6 +101,7 @@ parser = argparse.ArgumentParser('impute_annotations_from_blast.py')
 parser.add_argument('diamond_file', type=str, help='File path to tab delimited DIAMOND blastx results')
 parser.add_argument('blastdbcmd_file', type=str, help='File path to blastdbcmd file from diamond results')
 parser.add_argument('database_annotations', type=str, help='File path to the database annotation csv')
+parser.add_argument('unannotated_file', type=str, help='Output file to write remaining unannotated queries')
 
 
 ##########
@@ -67,33 +109,77 @@ parser.add_argument('database_annotations', type=str, help='File path to the dat
 ##########
 args = parser.parse_args()
 load_annots(args.database_annotations)
+load_diamond(args.diamond_file)
+sys.stderr.write('{:d} accepted hits from diamond blastx\n'.format(len(diamond_hash)))
+sys.stderr.write('{:d} rejected hits from diamond blastx\n'.format(len(diamond_reject)))
 
-# 0 query seq id
-# 1 target accession
-# 2 target seq id
-# 3 query length
-# 4 query start
-# 5 query stop
-# 6 target length
-# 7 target start
-# 8 target stop
-# 9 evalue
-# 10 percent identity
-# 11 gaps
-# 12 query coverage?
-# 13 target all titles <> delim
-# 14 target taxonomy ids
-# 15 target common names
-# 16 target blast names
-# 17 target sequence
+## Diamond blastx tabular output format
+# 0 query ID
+# 1 subject ID
+# 2 percent identity
+# 3 alignment length
+# 4 mismatch count
+# 5 gap open count
+# 6 query start
+# 7 query end
+# 8 target start
+# 9 target end
+# 10 evalue
+# 11 bit score
 
-for entry in blast_parse(args.pslx_file):
-    cov = float(int(entry[5]) - int(entry[4])) / int(entry[3])
-    gaps = int(entry[11])
-    ttitles = entry[13].replace('>', '|').replace('<', '').rstrip('|').split('|')
-    ttax = entry[14].split(';')
-    tcom = entry[15].split(';')
-    tblast = entry[16].split(';')
+## Blastdbcmd file format (needs to be split on \\t)
+# 0 sequence
+# 1 protein identifier (e.g. WP_#########.#) accession
+# 2 gene identifier (e.g. #########)
+# 3 ordinal id (not really used)
+# 4 full id
+# 5 sequence title <--- important part for annotation of proteins using blastx
+# 6 sequence length
+# 7 taxonomy ID
+# 8 node id
+# 9 node id
+# 10 parent node id
+# 11 tax name
+# 12 scientific tax name
+# 13 blast tax name
+# 14 parent tax name
+# 15 PIG
+
+## Annotation file format (comma-separated)
+# 0 fasta header name
+# 1 class
+# 2 mechanism
+# 3 group
+# 4 PHScreen_Category
+# 5 PHScreen_Type
+# 6 PHScreen_Resistance
+
+for entry in blast_parse(args.blastdbcmd_file):
+    id = (entry[2], entry[1])
+    if id in diamond_reject:
+        continue
+    elif id in diamond_hash:
+        diamond_hash[id][1] += Counter((entry[5],))
+
+
+for key, values in diamond_hash.items():
+    if values[1]:
+        annotated_seqs.add(values[0])
+
+with open(args.unannotated_file, 'w') as un:
+    for key, values in diamond_hash.items():
+        annot = pop_unknown(values[1])
+        if annot:
+            try:
+                sys.stdout.write(values[0]+'\t'+'|'.join(key)+'\t'+annot+'\n')
+            except BrokenPipeError:
+                break
+        else:
+            if values[0] in annotated_seqs:
+                continue
+            else:
+                un.write(values[0]+'\t'+'|'.join(key)+'\t'+'NA\n')
+
 
 
 
