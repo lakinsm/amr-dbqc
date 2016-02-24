@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
 
+## This script takes blast custom output and imputes a basic (high level) annotation based on the highest frequency
+## of exact match in blast results.  This can optionally be paired with diamond blastx and blastdbcmd parse data
+## for my custom annotation pipeline.  This script is highly specific for my use case.
+
 #############
 ## Imports ##
 #############
@@ -53,7 +57,8 @@ def load_annots(annot_file):
 ## ArgParse ##
 ##############
 parser = argparse.ArgumentParser('impute_annotations_from_blast.py')
-parser.add_argument('blast_file', type=str, help='File path to format 6 (custom) BLAST results')
+parser.add_argument('diamond_file', type=str, help='File path to tab delimited DIAMOND blastx results')
+parser.add_argument('blastdbcmd_file', type=str, help='File path to blastdbcmd file from diamond results')
 parser.add_argument('database_annotations', type=str, help='File path to the database annotation csv')
 
 
