@@ -18,8 +18,10 @@ from collections import Counter
 ##########
 db_annot = {}
 diamond_hash = {}
+db_hash = {}
 diamond_reject = set()
 annotated_seqs = set()
+unannotated_seqs = set()
 
 
 #############
@@ -82,15 +84,23 @@ def load_diamond(diamond_file):
 
 def pop_unknown(counter_obj):
     unknown = re.compile(r'unknown')
+    org = re.compile(r'[\[](.*)[\]]$')
     try:
         annot = max(counter_obj)
         if unknown.search(max(counter_obj)):
             counter_obj.pop(annot)
             pop_unknown(counter_obj)
         else:
-            return annot
+            try:
+                origin = org.search(annot).group(1)
+                annot = annot.replace('['+origin+']', '').rstrip()
+            except AttributeError:
+                origin = 'NA'
+                annot = max(counter_obj)
+            return annot, origin
     except ValueError:
-        return None
+        return None, None
+    return None, None
 
 
 
@@ -168,17 +178,25 @@ for key, values in diamond_hash.items():
 
 with open(args.unannotated_file, 'w') as un:
     for key, values in diamond_hash.items():
-        annot = pop_unknown(values[1])
+        annot, origin = pop_unknown(values[1])
         if annot:
-            try:
-                sys.stdout.write(values[0]+'\t'+'|'.join(key)+'\t'+annot+'\n')
-            except BrokenPipeError:
-                break
+            db_hash.setdefault(values[0], [Counter(), Counter(), Counter()])
+            db_hash[values[0]][0] += Counter(('|'.join(key),))
+            db_hash[values[0]][1] += Counter((annot,))
+            db_hash[values[0]][2] += Counter((origin,))
         else:
             if values[0] in annotated_seqs:
                 continue
             else:
-                un.write(values[0]+'\t'+'|'.join(key)+'\t'+'NA\n')
+                unannotated_seqs.add(values[0])
+    for entry in unannotated_seqs:
+        un.write(entry+'\n')
+    for key, values in db_hash.items():
+        try:
+            sys.stdout.write(key+'\t'+'\t'.join([max(x) for x in values[1:]])+'\t'+'|'.join(values[1])+'\t'+';'.join(values[0])+'\n')
+        except BrokenPipeError:
+            break
+
 
 
 
